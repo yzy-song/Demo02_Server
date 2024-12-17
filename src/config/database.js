@@ -2,7 +2,7 @@
  * @Author: yzy
  * @Date: 2024-12-16 10:48:58
  * @LastEditors: yzy
- * @LastEditTime: 2024-12-16 11:09:01
+ * @LastEditTime: 2024-12-17 12:51:04
  */
 const { Pool } = require('pg');
 const Redis = require('ioredis');
@@ -38,9 +38,25 @@ async function initDatabase() {
         process.exit(1); // Exit if database initialization fails
     }
 }
+const executeQuery = async (query, params = []) => {
+    const client = await pgPool.connect();
+    try {
+        const result = await client.query(query, params);
+        return result;
+    } catch (err) {
+        console.error('Database query error:', err);
+        throw err;
+    } finally {
+        client.release();
+    }
+};
+
+module.exports = { pgPool, redisClient, executeQuery };
+
 
 module.exports = {
     pgPool,
     redisClient,
+    executeQuery,
     initDatabase,
 };

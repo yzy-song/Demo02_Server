@@ -1,18 +1,23 @@
 const WebSocket = require('ws');
+const { executeQuery, redisClient } = require('../config/database');
 
 class GameServer {
     constructor(wss, BaseMessage, PlayerStateUpdate, PlayersState, ItemPickupEvent, ChatMessage) {
         this.wss = wss;
-        this.BaseMessage = BaseMessage; // 基础消息
-        this.PlayerStateUpdate = PlayerStateUpdate; // 玩家状态更新
-        this.PlayersState = PlayersState; // 所有玩家状态
-        this.ItemPickupEvent = ItemPickupEvent; // 道具拾取事件
-        this.ChatMessage = ChatMessage; // 聊天消息
+        this.redisClient = redisClient;
+        this.BaseMessage = BaseMessage;
+        this.PlayerStateUpdate = PlayerStateUpdate;
+        this.PlayersState = PlayersState;
+        this.ItemPickupEvent = ItemPickupEvent;
+        this.ChatMessage = ChatMessage;
 
-        this.clients = new Map(); // WebSocket 客户端映射
-        this.playerStates = new Map(); // 玩家状态存储
-        this.items = new Map(); // 道具状态存储
-        this.initItems(); // 初始化道具
+        this.clients = new Map();
+        this.playerStates = new Map();
+        this.items = new Map();
+
+        this.initItems();
+        this.startStateSync();
+        this.startZombieSessionCleanup();
     }
 
     start() {
@@ -29,22 +34,79 @@ class GameServer {
         });
     }
 
-    handleMessage(socket, data) {
-        console.log(`Received data length: ${data.length}`);
+    // 保存玩家状态到数据库
+    async savePlayerStateToDB(username, playerData) {
         try {
-            const baseMessage = this.BaseMessage.decode(data); // 解码 BaseMessage
-            console.log(`Event Type: ${baseMessage.eventType}`);
+            const { position, health, level, exp } = playerData;
+
+            const query = `
+                UPDATE users 
+                SET position = $1, health = $2, level = $3, exp = $4, updated_at = NOW()
+                WHERE username = $5;
+            `;
+            const values = [JSON.stringify(position), health, level, exp, username];
+            await executeQuery(query, values);
+            console.log(`Player state synced to DB for ${username}`);
+        } catch (err) {
+            console.error('Error syncing player state to DB:', err);
+        }
+    }
+
+    // 定时同步玩家状态到 Redis
+    startStateSync() {
+        setInterval(async () => {
+            try {
+                const allStates = Array.from(this.playerStates.entries());
+                const pipeline = this.redisClient.multi();
+
+                for (const [username, playerState] of allStates) {
+                    const redisKey = `playerState:${username}`;
+                    pipeline.set(redisKey, JSON.stringify(playerState), 'EX', 3600);
+                }
+
+                await pipeline.exec();
+                console.log('Player states synced to Redis.');
+            } catch (err) {
+                console.error('Error syncing player states to Redis:', err);
+            }
+        }, 1000 * 60 * 10);
+    }
+
+    // 清理僵尸会话
+    startZombieSessionCleanup() {
+        setInterval(async () => {
+            try {
+                const keys = await this.redisClient.keys('session:*');
+                for (const key of keys) {
+                    const ttl = await this.redisClient.ttl(key);
+                    if (ttl < 0) {
+                        const playerData = await this.redisClient.get(key);
+                        if (playerData) {
+                            const parsedData = JSON.parse(playerData);
+                            await this.savePlayerStateToDB(parsedData.username, parsedData);
+                        }
+                        await this.redisClient.del(key);
+                        console.log(`Expired session ${key} cleaned and synced to DB.`);
+                    }
+                }
+            } catch (err) {
+                console.error('Error clearing zombie sessions:', err);
+            }
+        }, 10 * 60 * 1000);
+    }
+
+    // 处理消息
+    handleMessage(socket, data) {
+        try {
+            const baseMessage = this.BaseMessage.decode(data);
+
             switch (baseMessage.eventType) {
-                case 'PlayerStateUpdate':
+                case 'Heartbeat': // 处理心跳包
+                    this.handleHeartbeat(socket);
+                    break;
+
+                case 'PlayerStateUpdate': // 玩家状态更新
                     this.handlePlayerStateUpdate(socket, baseMessage.payload);
-                    break;
-
-                case 'ItemPickup':
-                    this.handleItemPickup(socket, baseMessage.payload);
-                    break;
-
-                case 'ChatMessage':
-                    this.handleChatMessage(socket, baseMessage.payload);
                     break;
 
                 default:
@@ -56,68 +118,55 @@ class GameServer {
         }
     }
 
+    // 处理心跳包
+    handleHeartbeat(socket) {
+        const playerId = this.clients.get(socket);
+        if (playerId) {
+            const sessionKey = `session:${playerId}`;
+            this.redisClient.expire(sessionKey, 3600); // 刷新会话的过期时间
+            console.log(`Heartbeat received from ${playerId}. Session TTL refreshed.`);
+        } else {
+            console.warn('Heartbeat received, but player ID not found.');
+        }
+    }
+
     // 处理玩家状态更新
     handlePlayerStateUpdate(socket, payload) {
         const message = this.PlayerStateUpdate.decode(payload);
         const { player } = message;
 
         this.playerStates.set(player.username, player);
-        console.log(`Player state updated: ${player.username}`);
-        this.broadcastAllPlayerStates();
-    }
-
-    // 处理道具拾取事件
-    handleItemPickup(socket, payload) {
-        const event = this.ItemPickupEvent.decode(payload);
-
-        if (this.items.has(event.itemId)) {
-            this.items.delete(event.itemId);
-            console.log(`Item ${event.itemId} picked up by ${event.playerId}`);
-
-            // 广播道具拾取事件
-            const baseMessage = this.BaseMessage.create({
-                eventType: 'ItemPickup',
-                payload: this.ItemPickupEvent.encode(event).finish(),
-            });
-            this.broadcastMessage(baseMessage);
-        } else {
-            console.warn(`Item ${event.itemId} already picked up or doesn't exist.`);
+        if (!this.clients.has(socket)) {
+            this.clients.set(socket, player.username);
         }
-    }
 
-    // 处理聊天消息
-    handleChatMessage(socket, payload) {
-        const chatMessage = this.ChatMessage.decode(payload);
-        console.log(`Chat from ${chatMessage.sender}: ${chatMessage.content}`);
-
-        // 广播聊天消息
-        const baseMessage = this.BaseMessage.create({
-            eventType: 'ChatMessage',
-            payload: this.ChatMessage.encode(chatMessage).finish(),
-        });
-        this.broadcastMessage(baseMessage);
+        console.log(`Player ${player.username} updated: ${player.x}, ${player.y}`);
+        this.broadcastAllPlayerStates();
     }
 
     // 移除玩家
     removePlayer(socket) {
         const playerId = this.clients.get(socket);
         if (playerId) {
+            const playerState = this.playerStates.get(playerId);
+            if (playerState) {
+                this.savePlayerStateToDB(playerId, playerState);
+            }
             this.playerStates.delete(playerId);
             this.clients.delete(socket);
             console.log(`Player ${playerId} disconnected.`);
-
             this.broadcastAllPlayerStates();
+        } else {
+            console.warn('Player ID not found for the given socket.');
         }
     }
 
-    // 初始化道具
     initItems() {
         this.items.set('item1', { id: 'item1', name: 'Gold', x: 5, y: 5 });
         this.items.set('item2', { id: 'item2', name: 'Potion', x: 10, y: 10 });
         console.log('Items initialized.');
     }
 
-    // 广播所有玩家状态
     broadcastAllPlayerStates() {
         const players = Array.from(this.playerStates.values());
         const message = this.PlayersState.create({ players });
@@ -125,16 +174,12 @@ class GameServer {
             eventType: 'PlayerStateUpdate',
             payload: this.PlayersState.encode(message).finish(),
         });
-        console.log(`Sending BaseMessage: ${JSON.stringify(baseMessage)}`);
-        console.log(`Payload length: ${baseMessage.payload.length}`);
 
         this.broadcastMessage(baseMessage);
     }
 
-    // 广播消息
     broadcastMessage(baseMessage) {
         const encodedMessage = this.BaseMessage.encode(baseMessage).finish();
-
         this.wss.clients.forEach((client) => {
             if (client.readyState === WebSocket.OPEN) {
                 client.send(encodedMessage);

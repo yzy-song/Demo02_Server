@@ -1,13 +1,14 @@
-const { pgPool, redisClient } = require('../config/database');
+const { pgPool, redisClient, executeQuery } = require('../config/database');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
+const { GameServer } = require('../services/GameServer');
 
 // User Login
 exports.login = async (req, res) => {
     const { username, password } = req.body;
     try {
         const client = await pgPool.connect();
-        const userResult = await client.query(
+        const userResult = await executeQuery(
             'SELECT id, username, is_guest, progress, logout_position, level, exp, hp, password_hash FROM users WHERE username = $1',
             [username]
         );
@@ -73,7 +74,7 @@ exports.guestLogin = async (req, res) => {
             RETURNING id, username, is_guest, progress, logout_position, level, exp, hp;
         `;
 
-        const guestUser = await client.query(insertGuestQuery, [
+        const guestUser = await executeQuery(insertGuestQuery, [
             guestId,
             username,
             true,
@@ -123,6 +124,15 @@ exports.logout = async (req, res) => {
         await redisClient.del(sessionKey);
         await redisClient.del(`user:${user.username}`);
 
+        const userName = user.username;
+        const query = `
+            UPDATE users
+            SET updated_at = NOW(),
+                logout_position = $1
+            WHERE username = $2
+        `;
+        const logoutPosition = { x: user.x, y: user.y };
+        await executeQuery(query, [logoutPosition, userName]);
         return res.json({ message: 'Logout successful' });
     } catch (err) {
         console.error('Error during logout:', err);

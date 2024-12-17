@@ -2,7 +2,7 @@
  * @Author: yzy
  * @Date: 2024-12-11 16:02:22
  * @LastEditors: yzy
- * @LastEditTime: 2024-12-14 12:34:13
+ * @LastEditTime: 2024-12-17 12:56:24
  */
 const express = require('express');
 const router = express.Router();
@@ -16,6 +16,5 @@ router.post("/auth/logout", logout);
 
 // 游戏相关路由
 router.post("/game/onlinePlayers", onlinePlayers);
-router.post("/game/heartbeat", heartbeat);
 
 module.exports = router;
