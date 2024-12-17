@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package GameProtos; // 添加命名空间，避免与现有类冲突
+
+message PlayerProto {
+    string username = 1;
+    float x = 2; // 玩家x坐标
+    float y = 3; // 玩家y坐标
+    int32 lv = 4; // 玩家等级
+    int32 exp = 5; // 玩家经验
+    float hp = 6; // 玩家血量
+}
+
+message PlayerStateUpdate {
+    PlayerProto player = 1; // 使用修改后的消息名
+    string event_type = 2;  // 事件类型，例如 "update", "attack"
+}
+
+message PlayersState {
+    repeated PlayerProto players = 1; // 使用修改后的消息名
+}
+
+message ItemProto {
+    string id = 1;        // 道具唯一标识符
+    string name = 2;      // 道具名称
+    float x = 3;          // 位置 X 坐标
+    float y = 4;          // 位置 Y 坐标
+    bool isPickedUp = 5;  // 是否被拾取
+}
+
+
+message ItemPickupEvent {
+    string playerId = 1; // 拾取道具的玩家 ID
+    string itemId = 2;   // 被拾取的道具 ID
+}
+
+// 聊天消息结构
+message ChatMessage {
+    string sender = 1;      // 发送者用户名
+    string receiver = 2;    // 接收者用户名（空表示公屏聊天）
+    string content = 3;     // 聊天内容
+    int64 timestamp = 4;    // 时间戳
+}
+
+// 聊天广播消息
+message ChatBroadcast {
+    repeated ChatMessage messages = 1; // 广播的聊天消息列表
+}
