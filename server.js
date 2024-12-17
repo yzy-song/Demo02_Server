@@ -2,7 +2,7 @@
  * @Author: yzy
  * @Date: 2024-12-11 16:02:22
  * @LastEditors: yzy
- * @LastEditTime: 2024-12-16 21:48:18
+ * @LastEditTime: 2024-12-17 00:46:44
  */
 const WebSocket = require('ws');
 const protobuf = require('protobufjs');
@@ -13,8 +13,11 @@ const routes = require('./src/routes/Routes');
 
 // Load protobuf definitions
 const protoRoot = protobuf.loadSync('./src/proto/GameProto.proto');
-const PlayerStateUpdate = protoRoot.lookupType('PlayerStateUpdate');
-const PlayersState = protoRoot.lookupType('PlayersState');
+const BaseMessage = protoRoot.lookupType('GameProtos.BaseMessage');
+const PlayerStateUpdate = protoRoot.lookupType('GameProtos.PlayerStateUpdate');
+const PlayersState = protoRoot.lookupType('GameProtos.PlayersState');
+const ItemPickupEvent = protoRoot.lookupType('GameProtos.ItemPickupEvent');
+const ChatMessage = protoRoot.lookupType('GameProtos.ChatMessage');
 
 // Initialize Express server
 const app = express();
@@ -33,6 +36,13 @@ const server = app.listen(port, () => {
 
 // Initialize WebSocket server
 const wss = new WebSocket.Server({ server });
-const gameServer = new GameServer(wss, PlayerStateUpdate, PlayersState);
+const gameServer = new GameServer(
+    wss,
+    BaseMessage,
+    PlayerStateUpdate,
+    PlayersState,
+    ItemPickupEvent,
+    ChatMessage
+);
 
 gameServer.start();
