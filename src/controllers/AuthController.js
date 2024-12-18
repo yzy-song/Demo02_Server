@@ -123,6 +123,7 @@ exports.logout = async (req, res) => {
         const user = JSON.parse(sessionData);
         await redisClient.del(sessionKey);
         await redisClient.del(`user:${user.username}`);
+        await redisClient.del(`playerState:${user.username}`);
 
         const userName = user.username;
         const query = `

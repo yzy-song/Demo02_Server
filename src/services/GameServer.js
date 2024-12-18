@@ -45,7 +45,7 @@ class GameServer {
                 WHERE username = $5;
             `;
             const values = [JSON.stringify(position), health, level, exp, username];
-            await executeQuery(query, values);
+            // await executeQuery(query, values);
             console.log(`Player state synced to DB for ${username}`);
         } catch (err) {
             console.error('Error syncing player state to DB:', err);
@@ -69,7 +69,7 @@ class GameServer {
             } catch (err) {
                 console.error('Error syncing player states to Redis:', err);
             }
-        }, 1000 * 60 * 10);
+        }, 5000);
     }
 
     // 清理僵尸会话
@@ -133,16 +133,43 @@ class GameServer {
     // 处理玩家状态更新
     handlePlayerStateUpdate(socket, payload) {
         const message = this.PlayerStateUpdate.decode(payload);
-        const { player } = message;
-
+        let { player } = message;
+    
+        // 更新后的玩家状态
+        player = {
+            username: player.username || "unknown",
+            x: player.x !== undefined ? player.x : 0,
+            y: player.y !== undefined ? player.y : 0,
+            lv: player.lv !== undefined ? player.lv : 1,
+            exp: player.exp !== undefined ? player.exp : 0,
+            hp: player.hp !== undefined ? player.hp : 100,
+        };
+    
+        // 检查是否存在旧状态
+        const previousPlayerState = this.playerStates.get(player.username);
+    
+        // 去重逻辑：位置未变化时直接返回
+        if (
+            previousPlayerState &&
+            previousPlayerState.x === player.x &&
+            previousPlayerState.y === player.y
+        ) {
+            console.log(`Duplicate update ignored for ${player.username}: (${player.x}, ${player.y})`);
+            return; // 直接返回，跳过后续逻辑
+        }
+    
+        // 更新玩家状态
         this.playerStates.set(player.username, player);
+    
+        // 确保客户端与玩家映射一致
         if (!this.clients.has(socket)) {
             this.clients.set(socket, player.username);
         }
-
+    
         console.log(`Player ${player.username} updated: ${player.x}, ${player.y}`);
         this.broadcastAllPlayerStates();
     }
+    
 
     // 移除玩家
     removePlayer(socket) {
